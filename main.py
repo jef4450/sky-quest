@@ -63,9 +63,10 @@ def print_card(lat: float, lon: float, when: datetime) -> None:
             timescale,
         )
 
-    if best_window:
+    has_best_window = bool(best_window and best_window["window_start"] is not None)
+    if has_best_window:
         sky_facts["positions"] = best_window["positions"]
-    facts = _narration_facts(best_window, sky_facts, iss_passes)
+    facts = _narration_facts(best_window if has_best_window else None, sky_facts, iss_passes)
 
     print("\nSKY QUEST - TONIGHT")
     print(f"Location: {lat:.4f}, {lon:.4f} ({config.TIMEZONE})")
@@ -75,14 +76,20 @@ def print_card(lat: float, lon: float, when: datetime) -> None:
           f"{sky_facts['dark_time'] or 'not tonight'}")
 
     print("\nBEST WINDOW")
-    if best_window:
-        start = best_window["start"].strftime("%I:%M %p").lstrip("0")
-        end = best_window["end"].strftime("%I:%M %p").lstrip("0")
+    if has_best_window:
+        start = best_window["window_start"].strftime("%I:%M %p").lstrip("0")
+        end = best_window["window_end"].strftime("%I:%M %p").lstrip("0")
         print(f"{start} to {end}")
+        print(f"Score: {best_window['total_score']:g}")
         for reason in best_window["reasons"]:
             print(f"- {reason}")
     else:
-        print("No dark window was found for this date.")
+        message = (
+            best_window["message"]
+            if best_window
+            else "No dark window was found for this date."
+        )
+        print(message)
 
     print("\nWHAT IS WHERE (at the best window)")
     for name, position in sky_facts["positions"].items():
