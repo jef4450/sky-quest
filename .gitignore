@@ -1,0 +1,6 @@
+data/
+gemma_slips.log
+__pycache__/
+*.py[cod]
+.venv/
+.vscode/
