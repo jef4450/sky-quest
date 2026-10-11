@@ -1,0 +1,3 @@
+{"timestamp":"2026-10-11T20:10:00+05:30","persona":"calm","failure_type":"grounding_failure","reason":"Unlisted celestial object(s): mars","text":"Mars is bright above the horizon."}
+{"timestamp":"2026-10-11T20:12:00+05:30","persona":"precise","failure_type":"grounding_failure","reason":"Jupiter is paired with a direction that conflicts with its supplied position.","text":"Jupiter is high in the west."}
+{"timestamp":"2026-10-11T20:15:00+05:30","persona":"quiet","failure_type":"ollama_not_running","reason":"Could not connect to Ollama. Start the Ollama app or service, then try again.","text":"ConnectError"}

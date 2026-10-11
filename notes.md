@@ -22,7 +22,7 @@
 
 ### Planet and Moon Position Checks
 
-Compared Sky Quest's calculated positions with Stellarium at approximately 9:46 PM IST on October 11, 2026, for the Nagercoil area.
+Compared Sky Quest's calculated positions with Stellarium at approximately 9:46 PM IST on October 11, 2026, for a test location.
 
 | Object  | Sky Quest Altitude | Stellarium Altitude | Difference |
 | ------- | -----------------: | ------------------: | ---------: |
@@ -42,7 +42,7 @@ Compared Sky Quest's prediction with Heavens-Above for October 12, 2026.
 | Maximum altitude | 23.7°        | 24°                                                             |
 | Duration         | 4.5 minutes  | Approximately 2 minutes 11 seconds between listed start and end |
 
-The predicted time and maximum altitude were very close. The duration differed and needs further investigation. Heavens-Above was configured for Marthandam, rather than the exact Nagercoil coordinates, so the comparison was approximate.
+The predicted time and maximum altitude were very close. The duration differed and needs further investigation. Heavens-Above was configured for a nearby test location, so the comparison was approximate.
 
 ### Local Gemma Test
 
@@ -53,3 +53,31 @@ Test prompt: "2 friendly sentences about spotting Jupiter"
 The model generated two friendly sentences about observing Jupiter. Response time was not measured.
 
 During the application run, the grounding checker rejected two generated responses and the application fell back to a fact-only template. This demonstrated that the fallback behavior was working, although the grounding checker and generated wording may need improvement.
+
+## Best-Window Scorer — October 2026
+
+Implemented the best-window scorer in `scorer.py`.
+
+- Evaluates the night in 15-minute slots.
+- Selects the highest-scoring consecutive 60-minute window by default.
+- Awards points based on Jupiter and Saturn altitude.
+- Applies a Moon penalty based on illumination and altitude when the Moon is above the horizon.
+- Adds a bonus for overlapping ISS passes.
+- Returns the window start/end, total score, per-slot scores, and fact-based reasons.
+- Handles missing ISS passes and cases with no usable dark window.
+- Updated `main.py` to display the selected window while preserving the existing cards and `--demo` mode.
+
+### Demo run
+
+Command: `.\.venv\Scripts\python.exe main.py --demo`
+
+Observed result:
+
+- Best window: 9:11 PM–10:11 PM
+- Total score: 27.51
+- Saturn was above the horizon and high during the window.
+- Jupiter was below the horizon.
+- No visible ISS passes were found.
+- Gemma's two responses failed the grounding check, and the application used its fact-only fallback.
+
+Note: The demo output showed a sample location. Confirm the intended local coordinates before final validation.

@@ -23,7 +23,15 @@ Narration is sent only to the Ollama service running on your own computer.
    ollama pull gemma3:1b
    ```
 
-4. While connected to the internet, download the astronomy data once:
+4. Start the Ollama application before running Sky Quest. On Windows, open
+   Ollama from the Start menu and leave it running. Alternatively, start its
+   service in a separate PowerShell window:
+
+   ```powershell
+   ollama serve
+   ```
+
+5. While connected to the internet, download the astronomy data:
 
    ```powershell
    .\.venv\Scripts\python.exe download_data.py
@@ -31,13 +39,22 @@ Narration is sent only to the Ollama service running on your own computer.
 
    This saves `data/de421.bsp` and `data/iss.tle`. The `data/` folder is
    intentionally ignored by Git because the planetary file is large. The ISS
-   orbit information changes, so rerun the downloader occasionally while
-   online to refresh it.
+   orbit information changes and goes stale after a couple of weeks. Run the
+   downloader again immediately before each outing while online so the ISS
+   prediction uses current orbital data.
 
-5. Edit `config.py`: set `LATITUDE` and `LONGITUDE` to decimal coordinates,
-   choose a `PERSONA` (`calm`, `coach`, `precise`, or `quiet`), and confirm
-   `TIMEZONE`. `--demo` uses sample Bengaluru coordinates without changing
-   your config.
+6. Set your private location in PowerShell environment variables; do not put
+   your real coordinates in tracked source files. Replace the placeholders
+   below locally:
+
+   ```powershell
+   $env:SKY_QUEST_LATITUDE = Read-Host "Latitude (decimal degrees)"
+   $env:SKY_QUEST_LONGITUDE = Read-Host "Longitude (decimal degrees)"
+   ```
+
+   `config.py` uses placeholder `None` values when these are unset.
+   Choose a `PERSONA` (`calm`, `coach`, `precise`, or `quiet`) in `config.py`,
+   and confirm `TIMEZONE`.
 
 ## Run Sky Quest
 
@@ -53,10 +70,19 @@ Print a repeatable card for the fixed date October 15, 2026:
 .\.venv\Scripts\python.exe main.py --demo
 ```
 
+Both commands use the coordinates supplied through the environment variables.
 The demo date still uses real Skyfield calculations and needs the downloaded
 data files. It does not use fabricated astronomy. If Ollama is not running or
 the model is missing, Sky Quest prints a clear message and uses a fact-only
 template instead.
+
+## Run tests
+
+Run the test suite from the project folder:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
 
 ## Files
 
@@ -73,6 +99,8 @@ template instead.
   times, or numbers; failed generations are appended to `gemma_slips.log`.
 - `main.py` — combines the modules and prints the plain-text card.
 - `requirements.txt` — Python dependencies.
+- `docs/sample_gemma_slips.log` — cleaned sample narration diagnostics; actual
+  `gemma_slips.log` is local and ignored by Git.
 
 `config.py`, `sky.py`, `scorer.py`, `narrate.py`, and `grounding_check.py` are
 modules imported by `main.py`; `download_data.py` and `main.py` are the scripts

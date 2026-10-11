@@ -11,7 +11,6 @@ from sky import find_iss_passes, get_sky, load_sky_data, localize
 
 
 DEMO_TIME = datetime(2026, 10, 15, 18, 0)
-DEMO_LOCATION = (12.9716, 77.5946)  # Bengaluru, used only when --demo is selected.
 
 
 def _format_position(name: str, position: dict) -> str:
@@ -127,7 +126,11 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.demo:
-        latitude, longitude = DEMO_LOCATION
+        if config.LATITUDE is None or config.LONGITUDE is None:
+            parser.error(
+                "Set SKY_QUEST_LATITUDE and SKY_QUEST_LONGITUDE before running --demo."
+            )
+        latitude, longitude = config.LATITUDE, config.LONGITUDE
         when = DEMO_TIME.replace(tzinfo=ZoneInfo(config.TIMEZONE))
     else:
         if config.LATITUDE is None or config.LONGITUDE is None:

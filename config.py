@@ -1,8 +1,22 @@
 """Settings for Sky Quest. Fill in your observing location before a real run."""
 
-# Replace None with your location's decimal coordinates.
-LATITUDE = 8.1833
-LONGITUDE = 77.4119
+import os
+
+
+def _coordinate_from_environment(name: str) -> float | None:
+    """Read a coordinate without storing a personal location in this file."""
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except ValueError as error:
+        raise ValueError(f"{name} must be a decimal coordinate.") from error
+
+
+# Set these locally with SKY_QUEST_LATITUDE and SKY_QUEST_LONGITUDE.
+LATITUDE = _coordinate_from_environment("SKY_QUEST_LATITUDE")
+LONGITUDE = _coordinate_from_environment("SKY_QUEST_LONGITUDE")
 
 TIMEZONE = "Asia/Kolkata"
 MODEL_NAME = "gemma3:1b"
