@@ -24,6 +24,7 @@ class WebFormTests(unittest.TestCase):
             "start_time": ["19:00"],
             "place_label": ["Test place"],
             "output": ["card"],
+            "depth": ["explorer"],
             "equipment": ["naked_eye"],
             "field_of_view": ["120"],
             "window_facing": [""],
@@ -84,6 +85,10 @@ class WebFormTests(unittest.TestCase):
 
                 def fake_print_card(lat, lon, when, *, mode, result_data, **kwargs):
                     self.assertEqual(mode, expected_mode)
+                    self.assertEqual(
+                        kwargs["depth"],
+                        "casual" if activity == "run" else "explorer",
+                    )
                     if activity == "stay":
                         self.assertEqual(kwargs["equipment"], "naked_eye")
                         self.assertIsNone(kwargs["window_settings"]["facing"])
@@ -146,6 +151,44 @@ class WebFormTests(unittest.TestCase):
         self.assertIn("Audio (not available yet)", page)
         self.assertIn('name="date" type="date"', page)
         self.assertIn('name="start_time" type="time"', page)
+        self.assertIn("How deep do you want to go?", page)
+        self.assertIn("Casual night sky view", page)
+        self.assertIn(">Explorer</option>", page)
+        self.assertIn(">Deep dive</option>", page)
+
+    def test_invalid_depth_is_rejected_for_lucy_and_juvia(self):
+        for activity in ("walk", "stay"):
+            form = self.valid_form(activity)
+            form["depth"] = ["unbounded"]
+            with self.subTest(activity=activity):
+                with self.assertRaisesRegex(ValueError, "depth"):
+                    app._handle_generate(form)
+
+    def test_depth_can_be_selected_by_activity_and_natsu_is_unchanged(self):
+        for activity, expected in (
+            ("walk", "deep"),
+            ("stay", "explorer"),
+            ("run", "casual"),
+        ):
+            form = self.valid_form(activity)
+            form["depth"] = [{
+                "walk": "deep",
+                "stay": "explorer",
+                "run": "deep",
+            }[activity]]
+            with self.subTest(activity=activity):
+                with patch.object(
+                    app.card_engine,
+                    "print_card",
+                    side_effect=lambda *args, result_data, depth, **kwargs: (
+                        result_data.update(
+                            html="<main>Generated card</main>",
+                            facts={"ok": True},
+                        )
+                    ),
+                ) as print_card:
+                    app._handle_generate(form)
+                self.assertEqual(print_card.call_args.kwargs["depth"], expected)
 
     def test_saved_place_coordinates_are_not_embedded_in_form_html(self):
         saved = [{

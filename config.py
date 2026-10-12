@@ -26,6 +26,7 @@ WINDOW_FIELD_OF_VIEW = 120.0
 WINDOW_MIN_ALTITUDE = 10.0
 MODEL_NAME = "gemma3:1b"
 PERSONA = "calm"  # Choose: calm, coach, precise, or quiet.
+DEPTH = "casual"  # Choose: casual, explorer, or deep.
 
 
 def _validate_window_settings() -> None:

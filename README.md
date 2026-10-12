@@ -54,7 +54,8 @@ Narration is sent only to the Ollama service running on your own computer.
 
    `config.py` uses placeholder `None` values when these are unset.
    Confirm `TIMEZONE`. Card modes select their matching narration persona:
-   Lucy uses calm, Juvia quiet, and Natsu coach.
+   Lucy uses calm, Juvia quiet, and Natsu coach. The default card detail is
+   `DEPTH = "casual"` in `config.py`.
 
 ## Run Sky Quest
 
@@ -94,8 +95,13 @@ Status badges report Ollama/model availability, the local astronomy files,
 and the age of saved ISS data (with a warning after ten days). Ollama is
 optional: when it is unavailable, card generation uses the existing grounded
 fallback text.
-Lucy includes the five brightest catalog stars above the horizon, a computed
-Polaris note, and fixed constellation guides when their anchor stars are up.
+The Lucy and Juvia forms include a **How deep do you want to go?** setting:
+**Casual night sky view**, **Explorer**, or **Deep dive**. The same setting is
+available on the CLI for Lucy and Juvia.
+Natsu remains one target per stop and does not change with depth. The car
+activity is still a placeholder until Grey's card mode exists.
+Lucy ranks a capped set of visible objects and a fixed constellation guide
+when its anchor stars are up.
 Juvia is a cozy window card; its hourly timeline includes planets, bright stars,
 Polaris, eligible constellation guides, and telescope candidates. The candidate
 catalog covers double stars, open and globular clusters, nebulae, and galaxies.
@@ -126,6 +132,12 @@ validated when a card is generated.
 .\.venv\Scripts\python.exe main.py --mode juvia
 .\.venv\Scripts\python.exe main.py --mode natsu
 ```
+
+Use `--depth casual|explorer|deep` to change card detail; casual is the
+default. Casual shows at most 5 ranked objects and 1 constellation guide,
+Explorer at most 8 objects and 2 guides, and Deep dive at most 12 objects and
+3 guides in a compact two-column layout. The intro is limited to 2 sentences
+for Casual and 3 for Explorer/Deep. Natsu ignores this setting.
 
 Set an optional friendly place label without displaying coordinates:
 
@@ -162,11 +174,29 @@ Print a repeatable card for the fixed demo date October 15, 2026:
 .\.venv\Scripts\python.exe main.py --demo --mode natsu
 ```
 
+Try every depth in demo mode:
+
+```powershell
+.\.venv\Scripts\python.exe main.py --demo --mode lucy --depth casual
+.\.venv\Scripts\python.exe main.py --demo --mode lucy --depth explorer
+.\.venv\Scripts\python.exe main.py --demo --mode lucy --depth deep
+```
+
 Demo mode uses a fixed date and fictional sample locations, including
 `stops.example.json` for Natsu. It still uses Skyfield and the downloaded data
 files; it does not use fabricated astronomy. If Ollama is not running or the
 model is missing, Sky Quest prints a clear message and uses a fact-only
 template instead.
+
+Optionally check printed page counts for every demo card and depth. This is
+not part of the unit test suite and requires Google Chrome:
+
+```powershell
+.\.venv\Scripts\python.exe check_print_pages.py
+```
+
+The script reports clearly if Chrome is not installed. It uses temporary demo
+HTML/PDF files and does not include personal coordinates.
 
 ## Run tests
 

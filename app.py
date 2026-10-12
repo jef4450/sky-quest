@@ -211,7 +211,7 @@ def _form_page(activity: str, error: str = "") -> str:
     if mode is None:
         return _shell(
             label,
-            '<section class="panel"><h2>Coming soon</h2><p>Ride in a car is coming when Grey&#x27;s mode exists.</p>'
+            '<section class="panel"><h2>Coming soon</h2><p>Ride in a car is coming when Grey&#x27;s mode exists. The depth choice will be available when that card mode is ready.</p>'
             '<a class="button" href="/">Choose another activity</a></section>',
         )
 
@@ -227,8 +227,17 @@ def _form_page(activity: str, error: str = "") -> str:
         )
 
     activity_controls = ""
-    if activity == "stay":
+    if activity in {"walk", "stay"}:
         activity_controls = (
+            '<fieldset><legend>Card detail</legend>'
+            '<label>How deep do you want to go?<select name="depth">'
+            f'<option value="casual"{" selected" if config.DEPTH == "casual" else ""}>Casual night sky view</option>'
+            f'<option value="explorer"{" selected" if config.DEPTH == "explorer" else ""}>Explorer</option>'
+            f'<option value="deep"{" selected" if config.DEPTH == "deep" else ""}>Deep dive</option>'
+            '</select></label></fieldset>'
+        )
+    if activity == "stay":
+        activity_controls += (
             '<fieldset><legend>Viewing setup</legend>'
             '<label>Equipment<select name="equipment"><option value="naked_eye">Naked eye</option>'
             '<option value="telescope">Telescope</option></select></label>'
@@ -392,6 +401,15 @@ def _window_settings(form: dict[str, list[str]]) -> dict:
     }
 
 
+def _depth_setting(form: dict[str, list[str]], activity: str) -> str:
+    if activity == "run":
+        return config.DEPTH
+    depth = _field(form, "depth", config.DEPTH)
+    if depth not in card_engine.DEPTH_LIMITS:
+        raise ValueError("Invalid depth; choose casual, explorer, or deep card detail.")
+    return depth
+
+
 def _save_place(name: str, latitude: float, longitude: float) -> None:
     name = name.strip()
     if not name or len(name) > 80:
@@ -466,6 +484,7 @@ def _handle_generate(form: dict[str, list[str]]) -> str:
     stops = None
     window = None
     equipment = "telescope"
+    depth = _depth_setting(form, activity)
     if activity == "run":
         stops = _parse_stops(form)
     elif activity == "stay":
@@ -495,6 +514,7 @@ def _handle_generate(form: dict[str, list[str]]) -> str:
         equipment=equipment,
         result_data=context,
         place_label=place_label or "My observing place",
+        depth=depth,
     )
     return _result_page(context["html"], context["facts"])
 

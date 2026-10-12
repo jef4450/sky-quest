@@ -68,20 +68,72 @@ p { margin: 2mm 0; }
 .natsu .iss { margin-top: 3mm; padding: 2mm; font-size: 12pt; }
 .safety { margin-top: 4mm; font-size: 17pt; font-weight: 700; break-inside: avoid; page-break-inside: avoid; }
 .lucy { font-size: 15pt; }
-.lucy h2 { margin: 2mm 0 1mm; font-size: 22pt; }
-.lucy .window { margin: 2mm 0; padding: 3mm; }
-.lucy .window-label { font-size: 18pt; }
+.lucy h1 { margin-bottom: 1mm; }
+.lucy h2 { margin: 1.5mm 0 .5mm; font-size: 22pt; }
+.lucy .window { margin: 1mm 0; padding: 2mm; }
+.lucy .window-label { font-size: 16pt; }
 .lucy .window-time { font-size: 32pt; }
-.lucy .intro { margin: 2mm 0; font-size: 15pt; }
-.lucy-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 5mm; }
-.lucy .item { grid-template-columns: 8mm 1fr; gap: 2mm; padding: 1.5mm 1mm; font-size: 13.5pt; }
-.lucy .item.no-checkbox { grid-template-columns: 1fr; }
-.lucy .box { width: 7mm; height: 7mm; }
+.lucy .picks { margin: 0; padding-left: 7mm; list-style: none; counter-reset: pick; }
+.lucy .pick-row { display: grid; grid-template-columns: 7mm 1fr; gap: 1.5mm; align-items: center; padding: 1mm 1mm; border-bottom: 1pt solid #111; font-size: 14pt; line-height: 1.2; break-inside: avoid; page-break-inside: avoid; }
+.lucy .pick-row { counter-increment: pick; position: relative; }
+.lucy .pick-row::before { content: counter(pick) "."; position: absolute; left: -6mm; font-weight: 700; }
+.lucy .pick-row.no-checkbox { grid-template-columns: 1fr; }
+.lucy .pick-detail { display: block; }
+.lucy .pick-time { display: block; margin-top: .3mm; font-size: 14pt; font-weight: 700; }
+.lucy .box { width: 6mm; height: 6mm; }
+.lucy .guide-box { margin-top: 1mm; padding: 1.5mm 2mm; border: 1.5pt solid #111; break-inside: avoid; page-break-inside: avoid; }
+.lucy .guide-box h2 { margin: 0 0 .5mm; }
 .lucy .guide-list { margin: 0; padding-left: 5mm; }
-.lucy .guide-item { margin: 1mm 0; font-size: 15pt; line-height: 1.25; break-inside: avoid; }
-.lucy .polaris { margin: 2mm 0; }
-.lucy .small { margin-top: 2mm; }
-.lucy .iss { margin-top: 2mm; padding: 2mm; }
+.lucy .guide-item { margin: .5mm 0; font-size: 14pt; line-height: 1.2; break-inside: avoid; }
+.lucy .iss { margin-top: 1mm; padding: 1.5mm 2mm; font-size: 14pt; }
+.lucy .intro { margin: 1mm 0; font-size: 14pt; line-height: 1.25; }
+.lucy .small { margin-top: 1mm; font-size: 14pt; }
+.lucy.depth-deep { font-size: 12pt; }
+.lucy.depth-deep .picks { display: grid; grid-template-columns: 1fr 1fr; column-gap: 4mm; }
+.lucy.depth-deep .pick-row { font-size: 12pt; grid-template-columns: 5mm 1fr; gap: 1mm; padding: .8mm; }
+.lucy.depth-deep .pick-time { font-size: 12pt; }
+.lucy.depth-deep .box { width: 4.5mm; height: 4.5mm; }
+.lucy.depth-deep .guide-item { font-size: 12pt; }
+.lucy.depth-explorer h1,
+.lucy.depth-deep h1 { margin-bottom: .5mm; }
+.lucy.depth-explorer h2,
+.lucy.depth-deep h2 { margin: .5mm 0 .25mm; }
+.lucy.depth-explorer .window,
+.lucy.depth-deep .window { margin: .5mm 0; padding: 1mm; }
+.lucy.depth-explorer .window-time,
+.lucy.depth-deep .window-time { margin-top: 0; line-height: 1; }
+.lucy.depth-explorer .pick-row,
+.lucy.depth-deep .pick-row {
+    gap: 1mm;
+    padding: .4mm .5mm;
+    line-height: 1.05;
+}
+.lucy.depth-explorer .pick-time,
+.lucy.depth-deep .pick-time { margin-top: 0; line-height: 1.05; }
+.lucy.depth-explorer .guide-box,
+.lucy.depth-deep .guide-box { margin-top: .5mm; padding: .75mm 1mm; }
+.lucy.depth-explorer .guide-item,
+.lucy.depth-deep .guide-item { margin: .2mm 0; line-height: 1.05; }
+.lucy.depth-explorer .iss,
+.lucy.depth-deep .iss { margin-top: .5mm; padding: .75mm 1mm; }
+.lucy.depth-explorer .intro,
+.lucy.depth-deep .intro { margin: .5mm 0; line-height: 1.1; }
+.lucy.depth-explorer .small,
+.lucy.depth-deep .small { margin-top: .5mm; }
+.juvia { font-size: 14pt; }
+.juvia .intro { font-size: 14pt; }
+.juvia .facing { font-size: 14pt; }
+.juvia .timeline-item { font-size: 14pt; }
+.juvia .telescope-candidate { font-size: 14pt; }
+.juvia .naked-eye-notes { font-size: 14pt; }
+.juvia .iss { font-size: 14pt; }
+.juvia .notes { height: 25mm; }
+.juvia.depth-deep { font-size: 12pt; }
+.juvia.depth-deep .timeline { display: grid; grid-template-columns: 1fr 1fr; gap: 0 4mm; }
+.juvia.depth-deep .timeline-item { font-size: 12pt; }
+.juvia.depth-deep .telescope-candidate,
+.juvia.depth-deep .naked-eye-notes,
+.juvia.depth-deep .iss { font-size: 11pt; }
 """
 
 
@@ -173,6 +225,11 @@ def render_html_card(mode: str, data: dict) -> str:
     """Return complete HTML for one supported card mode."""
     if mode not in {"lucy", "juvia", "natsu"}:
         raise ValueError("mode must be lucy, juvia, or natsu")
+    depth = data.get("depth", "casual")
+    if mode in {"lucy", "juvia"} and depth not in {
+        "casual", "explorer", "deep"
+    }:
+        raise ValueError("depth must be casual, explorer, or deep")
 
     parts = [
         "<!doctype html>",
@@ -180,35 +237,61 @@ def render_html_card(mode: str, data: dict) -> str:
         '<meta name="viewport" content="width=device-width, initial-scale=1">',
         f"<title>Sky Quest - {_e(data['title'])}</title>",
         f"<style>{_BASE_STYLE}</style></head>",
-        f'<body><main class="card {mode}">',
+        (
+            f'<body><main class="card {mode}'
+            + (
+                f' depth-{_e(data.get("depth", "casual"))}'
+                if mode in {"lucy", "juvia"}
+                else ""
+            )
+            + '">'
+        ),
         _header(data, mode),
     ]
 
     if mode == "lucy":
-        parts.append(f'<p class="intro">{_e(data["intro"])}</p>')
-        parts.append('<div class="lucy-columns">')
-        parts.append("<section><h2>Tonight's checklist</h2><ul class=\"list\">")
-        for item in data["checklist"]:
-            parts.append(_checklist_item(item))
-        if data.get("polaris"):
-            parts.append(_checklist_item(data["polaris"]))
-        parts.append("</ul></section><section><h2>Bright stars</h2><ul class=\"list\">")
-        for star in data.get("stars", []):
-            parts.append(
-                _checklist_item({
-                    "text": f'{star["name"]}: {star["direction"]}, {star["height"]}',
-                    "visible": star["above_horizon"],
-                })
+        parts.append("<section><h2>Tonight's top picks</h2><ol class=\"picks\">")
+        for pick in data.get("top_picks", []):
+            checkbox = (
+                '<span class="box" aria-label="unchecked"></span>'
+                if pick.get("checkable", False)
+                else ""
             )
-        if not data.get("stars"):
-            parts.append('<li class="item no-checkbox"><span>No catalog stars are above the horizon.</span></li>')
-        parts.append("</ul></section></div>")
-        guides = data.get("guides", [])
-        if guides:
-            parts.append("<h2>Constellation guides</h2><ul class=\"guide-list\">")
-            for guide in guides:
-                parts.append(f'<li class="guide-item">{_e(guide["text"])}</li>')
-            parts.append("</ul>")
+            no_checkbox = "" if checkbox else " no-checkbox"
+            if pick.get("note"):
+                detail = _e(pick["note"])
+            elif pick["category"] == "iss":
+                detail = (
+                    f'ISS: {_e(pick["direction"])}, {_e(pick["height"])}'
+                    if pick.get("height")
+                    else f'ISS: {_e(pick["direction"])}'
+                )
+            else:
+                detail = (
+                    f'{_e(pick["object"])}: {_e(pick["direction"])}, '
+                    f'{_e(pick["height"])}'
+                )
+            parts.append(
+                f'<li class="pick-row{no_checkbox}">{checkbox}<span>'
+                f'<span class="pick-detail">{detail}</span>'
+                f'<span class="pick-time">Best time: {_e(pick["best_time"])}</span>'
+                "</span></li>"
+            )
+        if not data.get("top_picks"):
+            parts.append(
+                '<li class="pick-row no-checkbox">Nothing above the horizon is available tonight.</li>'
+            )
+        parts.append("</ol></section>")
+        parts.append('<section class="guide-box"><h2>How to find it</h2><ul class="guide-list">')
+        for guide in data.get("guides", []):
+            parts.append(f'<li class="guide-item">{_e(guide["text"])}</li>')
+        if not data.get("guides"):
+            parts.append(
+                '<li class="guide-item">No constellation guide is available from the visible anchors tonight.</li>'
+            )
+        parts.append("</ul></section>")
+        parts.append(_iss_section(data["iss_passes"]))
+        parts.append(f'<p class="intro">{_e(data["intro"])}</p>')
         parts.append('<p class="small">Give your eyes 10 minutes to adjust.</p>')
     elif mode == "juvia":
         parts.append(f'<p class="intro">{_e(data["intro"])}</p>')
@@ -292,7 +375,7 @@ def render_html_card(mode: str, data: dict) -> str:
     juvia_has_timeline_pass = mode == "juvia" and any(
         row["iss_passes"] for row in data["timeline"]
     )
-    if not juvia_has_timeline_pass:
+    if mode == "natsu" or (mode == "juvia" and not juvia_has_timeline_pass):
         parts.append(_iss_section(data["iss_passes"]))
     parts.append("</main></body></html>")
     return "\n".join(parts)

@@ -15,6 +15,7 @@ import config
 import deep_sky_targets
 from constellation_guides import applicable_guides
 from html_cards import NO_ISS_MESSAGE, render_html_card
+from narrate import fallback_text
 from sky import _summarize_pass, height_word, load_sky_data
 
 
@@ -93,6 +94,15 @@ class HtmlCardTests(unittest.TestCase):
             "telescope_targets": [],
             "intro": "A calm introduction.",
             "checklist": ["Jupiter: east, high, above the horizon"],
+            "top_picks": [{
+                "key": "planet:Jupiter",
+                "category": "planet",
+                "object": "Jupiter",
+                "direction": "east",
+                "height": "high",
+                "best_time": "8:00 PM",
+                "checkable": True,
+            }],
             "targets": [],
             "stops": [],
             "timeline": [],
@@ -128,6 +138,15 @@ class HtmlCardTests(unittest.TestCase):
                 html = render_html_card(mode, self.data())
                 self.assertIn(NO_ISS_MESSAGE, html)
                 self.assertEqual(html.count('class="iss"'), 1)
+
+    def test_coordinates_are_redacted_in_every_card_mode(self):
+        for mode in ("lucy", "juvia", "natsu"):
+            data = self.data()
+            data["place_label"] = "12.3456, 77.1234"
+            html = render_html_card(mode, data)
+            with self.subTest(mode=mode):
+                self.assertNotIn("12.3456", html)
+                self.assertNotIn("77.1234", html)
 
     def test_every_mode_has_print_style_and_empty_checkbox(self):
         for mode in ("lucy", "juvia", "natsu"):
@@ -184,6 +203,57 @@ class HtmlCardTests(unittest.TestCase):
         self.assertNotRegex(lucy, r"\b\d+(?:\.\d+)?(?:vh|vw|px)\b")
         self.assertIn("print-color-adjust: exact", lucy)
         self.assertIn("-webkit-print-color-adjust: exact", lucy)
+
+    def test_best_of_night_caps_and_star_rules_by_depth(self):
+        positions = {
+            "Moon": position(35, "west", "halfway up"),
+            "Jupiter": position(60, "south", "high"),
+            "Saturn": position(20, "east", "halfway up"),
+            "Venus": position(80, "north", "high"),
+        }
+        visible_stars = {
+            name: {
+                **position(30 + index, "north"),
+                "apparent_magnitude": record["apparent_magnitude"],
+            }
+            for index, (name, record) in enumerate(stars.BRIGHT_STARS.items())
+        }
+        visible_stars["Sirius"] = position(-1, "south", "below the horizon")
+        facts = {
+            "positions": positions,
+            "stars": visible_stars,
+            "iss_passes": [],
+            "moon_illumination": 0.75,
+        }
+        casual = main.rank_best_of_night(facts, "casual")
+        explorer = main.rank_best_of_night(facts, "explorer")
+        deep = main.rank_best_of_night(facts, "deep")
+        self.assertEqual((len(casual), len(explorer), len(deep)), (5, 8, 12))
+        self.assertLessEqual(
+            sum(item["category"] == "star" for item in casual),
+            2,
+        )
+        self.assertNotIn("Venus", [item["object"] for item in deep])
+        self.assertNotIn("Sirius", [item["object"] for item in deep])
+        self.assertEqual(casual, main.rank_best_of_night(facts, "casual"))
+
+    def test_iss_pass_ranks_first_and_is_deterministic(self):
+        facts = {
+            "positions": sky_facts()["positions"],
+            "stars": star_facts(),
+            "moon_illumination": 0.9,
+            "iss_passes": [{
+                "start": "Oct 15, 8:20 PM",
+                "local_date_time": "Oct 15, 2026 at 8:20 PM",
+                "start_datetime": START.isoformat(),
+                "appears_from": "west",
+                "disappears_toward": "east",
+                "peak_height": "high",
+            }],
+        }
+        ranked = main.rank_best_of_night(facts, "deep")
+        self.assertEqual(ranked[0]["object"], "ISS")
+        self.assertEqual(ranked, main.rank_best_of_night(facts, "deep"))
 
     def test_juvia_renders_timeline_and_naked_eye_notes(self):
         data = self.data()
@@ -257,49 +327,42 @@ class HtmlCardTests(unittest.TestCase):
 
     def test_lucy_does_not_add_boxes_for_below_horizon_items(self):
         data = self.data()
-        data["checklist"] = [
-            {"text": "Moon: north, low, below the horizon", "visible": False, "checkable": False},
-            {"text": "Jupiter: east, high, above the horizon", "visible": True, "checkable": True},
-        ]
-        data["polaris"] = {
-            "text": "Polaris is not visible from this latitude",
-            "visible": False,
-            "checkable": False,
-        }
-        data["stars"] = [
+        data["top_picks"] = [
             {
-                "name": "Sirius",
-                "direction": "south-east",
-                "height": "low",
-                "above_horizon": True,
-            }
+                "category": "star",
+                "object": "Polaris",
+                "direction": "",
+                "height": "",
+                "best_time": "8:00 PM",
+                "note": "Polaris is not visible from this latitude",
+                "checkable": False,
+            },
+            {
+                "category": "planet",
+                "object": "Jupiter",
+                "direction": "east",
+                "height": "high",
+                "best_time": "8:00 PM",
+                "checkable": True,
+            },
         ]
         html = render_html_card("lucy", data)
-        moon_row = html.split("Moon:", 1)[1].split("</li>", 1)[0]
+        self.assertNotIn("below the horizon", html)
         polaris_row = html.split("Polaris is not visible", 1)[1].split("</li>", 1)[0]
-        self.assertNotIn('class="box"', moon_row)
         self.assertNotIn('class="box"', polaris_row)
-        self.assertIn("Sirius: south-east, low", html)
-        data["polaris"] = {
-            "text": "Polaris is low from here: you need a clear north horizon.",
-            "visible": True,
-            "checkable": False,
-        }
-        low_row = render_html_card("lucy", data).split(
-            "Polaris is low from here", 1
-        )[1].split("</li>", 1)[0]
-        self.assertNotIn('class="box"', low_row)
+        self.assertIn("Jupiter: east, high", html)
+        self.assertIn('class="box"', html)
 
     def test_lucy_star_and_guide_sections_are_escaped(self):
         data = self.data()
-        data["stars"] = [
-            {
-                "name": "Vega <unsafe>",
-                "direction": "east",
-                "height": "high",
-                "above_horizon": True,
-            }
-        ]
+        data["top_picks"] = [{
+            "category": "star",
+            "object": "Vega <unsafe>",
+            "direction": "east",
+            "height": "high",
+            "best_time": "8:00 PM",
+            "checkable": True,
+        }]
         data["guides"] = [{"name": "Orion", "text": "Orion's belt is <visible>."}]
         html = render_html_card("lucy", data)
         self.assertIn("Vega &lt;unsafe&gt;", html)
@@ -331,7 +394,10 @@ class ModeAndAstronomyTests(unittest.TestCase):
         with patch("main.print_card") as print_card:
             self.assertEqual(main.main(["--demo"]), 0)
             self.assertEqual(print_card.call_args.kwargs["mode"], "lucy")
+            self.assertEqual(print_card.call_args.kwargs["depth"], config.DEPTH)
             self.assertTrue(print_card.call_args.kwargs["demo"])
+            self.assertEqual(main.main(["--demo", "--depth", "deep"]), 0)
+            self.assertEqual(print_card.call_args.kwargs["depth"], "deep")
             for mode in ("lucy", "juvia", "natsu"):
                 self.assertEqual(main.main(["--demo", "--mode", mode]), 0)
                 self.assertEqual(print_card.call_args.kwargs["mode"], mode)
@@ -352,7 +418,12 @@ class ModeAndAstronomyTests(unittest.TestCase):
                     output_dir=self.output_dir,
                 )
                 self.assertTrue(path.exists())
-                self.assertIn(f"<main class=\"card {mode}\">", path.read_text(encoding="utf-8"))
+                expected_class = (
+                    f'<main class="card {mode} depth-casual">'
+                    if mode == "lucy"
+                    else f'<main class="card {mode}">'
+                )
+                self.assertIn(expected_class, path.read_text(encoding="utf-8"))
                 self.assertIn(NO_ISS_MESSAGE, path.read_text(encoding="utf-8"))
                 self.assertNotIn("12.0", path.read_text(encoding="utf-8"))
                 self.assertNotIn("77.0", path.read_text(encoding="utf-8"))
@@ -379,6 +450,113 @@ class ModeAndAstronomyTests(unittest.TestCase):
         self.assertEqual(self.mocks[4].call_count, calls_before_juvia)
         juvia_html = (self.output_dir / "juvia-2026-10-15.html").read_text(encoding="utf-8")
         self.assertNotIn("this is juvias", juvia_html.lower())
+
+    def test_lucy_renders_one_window_and_caps_rows_guides_and_intro(self):
+        for depth, cap, guide_cap, sentence_count in (
+            ("casual", 5, 1, 2),
+            ("explorer", 8, 2, 3),
+            ("deep", 12, 3, 3),
+        ):
+            with self.subTest(depth=depth):
+                with patch("main.get_positions", return_value=sky_facts()["positions"]):
+                    path = main.print_card(
+                        12.0,
+                        77.0,
+                        START,
+                        mode="lucy",
+                        output_dir=self.output_dir,
+                        depth=depth,
+                    )
+                html = path.read_text(encoding="utf-8")
+                self.assertEqual(html.count("Best viewing window:"), 1)
+                self.assertEqual(html.count("8:00 PM to 9:00 PM"), 1)
+                self.assertLessEqual(html.count('class="pick-row'), cap)
+                self.assertLessEqual(html.count('class="guide-item"'), guide_cap)
+                self.assertIn(f"depth-{depth}", html)
+                self.assertEqual(
+                    self.mocks[4].call_args.kwargs["sentence_count"],
+                    sentence_count,
+                )
+                self.assertNotIn("best_window", self.mocks[4].call_args.args[0])
+
+    def test_lucy_narration_omits_moon_facts_when_moon_is_not_a_pick(self):
+        positions = sky_facts()["positions"]
+        positions["Moon"] = position(-5, "west", "below the horizon")
+        window = {**best_window(), "positions": positions}
+        with patch("main.score_night", return_value=window):
+            with patch("main.get_positions", return_value=positions):
+                main.print_card(
+                    12.0, 77.0, START, mode="lucy",
+                    output_dir=self.output_dir, depth="explorer",
+                )
+
+        narration_facts = self.mocks[4].call_args.args[0]
+        self.assertNotIn("Moon", narration_facts["positions"])
+        for key in ("moon_phase", "moonrise", "moonset"):
+            self.assertNotIn(key, narration_facts)
+        fallback = fallback_text(narration_facts, sentence_count=3)
+        self.assertNotIn("{", fallback)
+        self.assertNotIn("Moon", fallback)
+
+    def test_lucy_depth_casual_has_at_most_six_total_content_rows(self):
+        with patch("main.get_positions", return_value=sky_facts()["positions"]):
+            path = main.print_card(
+                12.0, 77.0, START, mode="lucy",
+                output_dir=self.output_dir, depth="casual",
+            )
+        html = path.read_text(encoding="utf-8")
+        self.assertLessEqual(
+            html.count('class="pick-row') + html.count('class="guide-item"'),
+            6,
+        )
+
+    def test_juvia_timeline_caps_visible_targets_and_guides_by_depth(self):
+        visible_planets = {
+            "Moon": position(45, "south", "halfway up"),
+            "Jupiter": position(60, "east", "high"),
+            "Saturn": position(30, "west", "halfway up"),
+        }
+        visible_stars = {
+            name: position(30 + index, "north", "high")
+            for index, name in enumerate(stars.STAR_CATALOG)
+        }
+        for depth, item_limit, guide_limit in (
+            ("casual", 5, 1),
+            ("explorer", 8, 2),
+            ("deep", 12, 3),
+        ):
+            with self.subTest(depth=depth):
+                with patch("main.get_positions", return_value=visible_planets):
+                    with patch("main.get_star_positions", return_value=visible_stars):
+                        with patch("main.get_telescope_target_positions", return_value={}):
+                            with patch("main.is_dark_at", return_value=True):
+                                with patch("main.moon_illumination_at", return_value=0.5):
+                                    timeline, _ = main._juvia_timeline(
+                                        START, "eph", "ts", 1, 2, [],
+                                        None, 120, 10, depth=depth,
+                                    )
+                target_count = sum(
+                    bool(item.get("object"))
+                    for row in timeline
+                    for item in row["items"]
+                ) + sum(
+                    len(row["telescope_targets"]) for row in timeline
+                ) + sum(
+                    len(row["iss_passes"]) for row in timeline
+                )
+                guide_names = {
+                    item["guide"]
+                    for row in timeline
+                    for item in row["items"]
+                    if item.get("guide")
+                }
+                self.assertLessEqual(target_count, item_limit)
+                self.assertLessEqual(len(guide_names), guide_limit)
+                self.assertFalse(any(
+                    "below the horizon" in item["text"]
+                    for row in timeline
+                    for item in row["items"]
+                ))
 
     def test_natsu_schedule_has_each_stop_once_and_no_stop_summary(self):
         with patch("main.get_positions", return_value=sky_facts()["positions"]):
@@ -663,7 +841,7 @@ class ModeAndAstronomyTests(unittest.TestCase):
             "lucy",
             {**HtmlCardTests().data(), "iss_passes": [pass_record]},
         )
-        self.assertIn("Visible ISS pass (local time)", html)
+        self.assertIn("Visible ISS pass (local time):", html)
         self.assertIn("Oct 15, 2026 at 8:00 PM", html)
 
     def test_juvia_empty_rows_iss_assignment_and_row_cap(self):
@@ -764,10 +942,16 @@ class ModeAndAstronomyTests(unittest.TestCase):
                             dark_start, "ephemeris", "timescale", latitude,
                             0.0, [], None, 120, 10,
                         )
-                self.assertIn(
-                    expected,
-                    [item["text"] for item in timeline[0]["items"]],
-                )
+                if latitude == -35.0:
+                    self.assertNotIn(
+                        expected,
+                        [item["text"] for item in timeline[0]["items"]],
+                    )
+                else:
+                    self.assertIn(
+                        expected,
+                        [item["text"] for item in timeline[0]["items"]],
+                    )
 
     def test_juvia_window_settings_are_validated(self):
         invalid_settings = (

@@ -38,10 +38,183 @@ PROJECT_DIR = Path(__file__).resolve().parent
 STOP_TIME_PATTERN = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 MAX_JUVIA_ROWS = 5
 MODE_PERSONAS = {"lucy": "calm", "juvia": "quiet", "natsu": "coach"}
+DEPTH_LIMITS = {
+    "casual": {"items": 5, "guides": 1, "sentences": 2},
+    "explorer": {"items": 8, "guides": 2, "sentences": 3},
+    "deep": {"items": 12, "guides": 3, "sentences": 3},
+}
 
 
 def _format_time(when: datetime) -> str:
     return when.strftime("%I:%M %p").lstrip("0")
+
+
+def _depth_settings(depth: str) -> dict[str, int]:
+    try:
+        return DEPTH_LIMITS[depth]
+    except (KeyError, TypeError) as error:
+        raise ValueError("depth must be casual, explorer, or deep") from error
+
+
+def rank_best_of_night(facts: dict, depth: str = "casual") -> list[dict]:
+    """Rank already-calculated visible facts without performing astronomy."""
+    settings = _depth_settings(depth)
+    positions = facts.get("positions", {})
+    stars_by_name = facts.get("stars", {})
+    illumination = facts.get("moon_illumination", 0.0)
+    candidates = []
+
+    passes = facts.get("iss_passes", [])
+    if passes:
+        visible_pass = min(
+            passes,
+            key=lambda item: (
+                item.get("start_datetime", ""),
+                item.get("local_date_time", ""),
+                item.get("appears_from", ""),
+                item.get("disappears_toward", ""),
+            ),
+        )
+        candidates.append({
+            "key": "iss:" + str(
+                visible_pass.get("start_datetime")
+                or visible_pass.get("local_date_time")
+                or visible_pass.get("start", "")
+            ),
+            "object": "ISS",
+            "direction": (
+                f"from {visible_pass.get('appears_from', 'unknown')} "
+                f"toward {visible_pass.get('disappears_toward', 'unknown')}"
+            ),
+            "height": visible_pass.get("peak_height", ""),
+            "best_time": (
+                visible_pass.get("local_date_time")
+                or visible_pass.get("start", "")
+            ),
+            "checkable": True,
+            "category": "iss",
+            "score": 5000.0,
+            "_rank": (5, 0.0, 0.0, "", "ISS"),
+        })
+
+    moon = positions.get("Moon")
+    if _position_is_visible(moon):
+        candidates.append(_ranked_position(
+            "Moon", moon, "moon",
+            (4, float(illumination), float(moon["altitude_degrees"]), "", "Moon"),
+            4000.0 + float(illumination),
+        ))
+
+    visible_planets = []
+    for name in ("Jupiter", "Saturn"):
+        position = positions.get(name)
+        if _position_is_visible(position) and position["altitude_degrees"] > 15:
+            visible_planets.append((name, position))
+    for name, position in visible_planets:
+        altitude = float(position["altitude_degrees"])
+        candidates.append(_ranked_position(
+            name, position, "planet",
+            (3, altitude, altitude, "", name),
+            3000.0 + altitude,
+        ))
+
+    for name in BRIGHT_STARS:
+        position = stars_by_name.get(name)
+        if not _position_is_visible(position):
+            continue
+        magnitude = float(position.get(
+            "apparent_magnitude", BRIGHT_STARS[name]["apparent_magnitude"]
+        ))
+        altitude = float(position["altitude_degrees"])
+        candidates.append(_ranked_position(
+            name, position, "star",
+            (2, -magnitude, altitude, magnitude, name),
+            2000.0 - magnitude,
+            magnitude=magnitude,
+        ))
+
+    for target in facts.get("other_targets", []):
+        if not _position_is_visible(target):
+            continue
+        altitude = float(target["altitude_degrees"])
+        name = target.get("name") or target.get("catalog", "Target")
+        catalog = target.get("catalog", name)
+        candidates.append({
+            "key": f"target:{catalog}",
+            "object": name,
+            "direction": target["direction"],
+            "height": target["height"],
+            "best_time": target.get("best_time", ""),
+            "checkable": True,
+            "category": "target",
+            "score": 1000.0 + altitude,
+            "_rank": (1, altitude, altitude, "", str(catalog)),
+            "catalog": catalog,
+        })
+
+    ordered = sorted(candidates, key=lambda item: item["_rank"], reverse=True)
+    selected = []
+    star_count = 0
+    planets_are_up = bool(visible_planets)
+    for candidate in ordered:
+        if (
+            depth == "casual"
+            and planets_are_up
+            and candidate["category"] == "star"
+            and star_count >= 2
+        ):
+            continue
+        selected.append({
+            key: value for key, value in candidate.items()
+            if key != "_rank"
+        })
+        if candidate["category"] == "star":
+            star_count += 1
+        if len(selected) >= settings["items"]:
+            break
+    return selected
+
+
+def _position_is_visible(position: dict | None) -> bool:
+    return bool(
+        position
+        and position.get("above_horizon") is not False
+        and isinstance(position.get("altitude_degrees"), (int, float))
+        and not isinstance(position.get("altitude_degrees"), bool)
+        and position["altitude_degrees"] > 0
+    )
+
+
+def _ranked_position(
+    name: str,
+    position: dict,
+    category: str,
+    rank: tuple,
+    score: float,
+    *,
+    magnitude: float | None = None,
+) -> dict:
+    candidate = {
+        "key": f"{category}:{name}",
+        "object": name,
+        "direction": position["direction"],
+        "height": position["height"],
+        "best_time": "",
+        "checkable": not (
+            name == "Polaris" and position["altitude_degrees"] <= 15
+        ),
+        "category": category,
+        "score": score,
+        "_rank": rank,
+        "altitude_degrees": position["altitude_degrees"],
+    }
+    if magnitude is not None:
+        candidate["apparent_magnitude"] = magnitude
+    if name == "Polaris" and position["altitude_degrees"] <= 15:
+        candidate["note"] = (
+            "Polaris is low from here: you need a clear north horizon."
+        )
+    return candidate
 
 
 def _narration_facts(
@@ -220,6 +393,7 @@ def _juvia_timeline(
     field_of_view: float,
     minimum_altitude: float,
     include_telescope: bool = True,
+    depth: str = "casual",
 ) -> tuple[list[dict], dict]:
     """Calculate a capped hourly timeline of objects and guides in Juvia's window."""
     if dark_start is None:
@@ -282,14 +456,22 @@ def _juvia_timeline(
         for name in ("Moon", "Jupiter", "Saturn"):
             position = planet_positions[name]
             if not position["above_horizon"]:
-                items.append(
-                    {"text": f"{name}: below the horizon", "checkable": False}
-                )
+                items.append({
+                    "text": f"{name}: below the horizon",
+                    "checkable": False,
+                    "object": name,
+                })
             elif not _juvia_in_window(
                 position, facing, field_of_view, minimum_altitude
             ):
                 items.append(
-                    {"text": f"{name}: not in your window", "checkable": False}
+                    {
+                        "text": f"{name}: not in your window",
+                        "checkable": False,
+                        "object": name,
+                        "outside_window": True,
+                        "altitude_degrees": position["altitude_degrees"],
+                    }
                 )
             else:
                 items.append(
@@ -298,6 +480,8 @@ def _juvia_timeline(
                             f"{name}: {position['direction']}, {position['height']}"
                         ),
                         "checkable": True,
+                        "object": name,
+                        "altitude_degrees": position["altitude_degrees"],
                     }
                 )
                 fact_positions[name] = position
@@ -311,7 +495,9 @@ def _juvia_timeline(
                 position, facing, field_of_view, minimum_altitude
             )
         }
-        bright_stars = brightest_visible_stars(stars_in_window, limit=5)
+        bright_stars = brightest_visible_stars(
+            stars_in_window, limit=len(BRIGHT_STARS)
+        )
         for star in bright_stars:
             name = star["name"]
             position = star_positions[name]
@@ -319,6 +505,8 @@ def _juvia_timeline(
                 {
                     "text": f"{name}: {star['direction']}, {star['height']}",
                     "checkable": True,
+                    "object": name,
+                    "altitude_degrees": position["altitude_degrees"],
                 }
             )
             fact_stars[name] = position
@@ -329,19 +517,26 @@ def _juvia_timeline(
                 {
                     "text": "Polaris is not visible from this latitude",
                     "checkable": False,
+                    "object": "Polaris",
                 }
             )
         elif not _juvia_in_window(
             polaris, facing, field_of_view, minimum_altitude
         ):
             items.append(
-                {"text": "Polaris: not in your window", "checkable": False}
+                {
+                    "text": "Polaris: not in your window",
+                    "checkable": False,
+                    "object": "Polaris",
+                }
             )
         elif polaris["altitude_degrees"] <= 15:
             items.append(
                 {
                     "text": "Polaris is low from here: you need a clear north horizon.",
                     "checkable": False,
+                    "object": "Polaris",
+                    "altitude_degrees": polaris["altitude_degrees"],
                 }
             )
             fact_stars["Polaris"] = polaris
@@ -352,12 +547,18 @@ def _juvia_timeline(
                 {
                     "text": f"Polaris: {polaris['direction']}, {polaris['height']}",
                     "checkable": True,
+                    "object": "Polaris",
+                    "altitude_degrees": polaris["altitude_degrees"],
                 }
             )
             fact_stars["Polaris"] = polaris
         else:
             items.append(
-                {"text": "Polaris: not in your window", "checkable": False}
+                {
+                    "text": "Polaris: not in your window",
+                    "checkable": False,
+                    "object": "Polaris",
+                }
             )
 
         in_window_anchors = {
@@ -435,6 +636,7 @@ def _juvia_timeline(
                 "time": _format_time(row_time),
                 "positions": fact_positions,
                 "stars": fact_stars,
+                "moon_illumination": moon_illumination,
                 "constellation_guides": guides,
                 "telescope_targets": {
                     item["catalog"]: target_positions[item["catalog"]]
@@ -452,6 +654,8 @@ def _juvia_timeline(
         )
         row_time += timedelta(hours=1)
 
+    _limit_juvia_timeline(rows, facts_rows, depth)
+
     facts = {
         "timeline": facts_rows,
         "iss_passes": [
@@ -466,6 +670,182 @@ def _juvia_timeline(
         "narration_line": "A quiet view from your window is ready.",
     }
     return rows, facts
+
+
+def _limit_juvia_timeline(
+    rows: list[dict],
+    facts_rows: list[dict],
+    depth: str,
+) -> None:
+    """Keep ranked targets and guides once, at each target's best timeline row."""
+    settings = _depth_settings(depth)
+    positions_by_name: dict[str, dict] = {}
+    stars_by_name: dict[str, dict] = {}
+    position_rows: dict[str, tuple[int, float]] = {}
+    star_rows: dict[str, tuple[int, float]] = {}
+    targets_by_catalog: dict[str, dict] = {}
+    target_rows: dict[str, tuple[int, float]] = {}
+    for row_index, (row, fact_row) in enumerate(zip(rows, facts_rows)):
+        for name, position in fact_row["positions"].items():
+            altitude = float(position["altitude_degrees"])
+            current = position_rows.get(name)
+            if _position_is_visible(position) and (
+                current is None or altitude > current[1]
+            ):
+                positions_by_name[name] = position
+                position_rows[name] = (row_index, altitude)
+        for name, position in fact_row["stars"].items():
+            altitude = float(position["altitude_degrees"])
+            current = star_rows.get(name)
+            if _position_is_visible(position) and (
+                current is None or altitude > current[1]
+            ):
+                stars_by_name[name] = position
+                star_rows[name] = (row_index, altitude)
+        for target in row["telescope_targets"]:
+            catalog = target["catalog"]
+            altitude = float(target["altitude_degrees"])
+            current = target_rows.get(catalog)
+            if current is None or altitude > current[1]:
+                targets_by_catalog[catalog] = target
+                target_rows[catalog] = (row_index, altitude)
+
+    all_passes = [
+        iss_pass for row in rows for iss_pass in row["iss_passes"]
+    ]
+    illumination = max(
+        (fact_row.get("moon_illumination", 0.0) for fact_row in facts_rows),
+        default=0.0,
+    )
+    ranked = rank_best_of_night(
+        {
+            "positions": positions_by_name,
+            "stars": stars_by_name,
+            "iss_passes": all_passes,
+            "moon_illumination": illumination,
+            "other_targets": list(targets_by_catalog.values()),
+        },
+        depth,
+    )
+    ranked_order = {
+        candidate["key"]: index for index, candidate in enumerate(ranked)
+    }
+    selected_objects = {
+        candidate["object"]
+        for candidate in ranked
+        if candidate["category"] in {"moon", "planet", "star"}
+    }
+    selected_targets = {
+        candidate["catalog"]
+        for candidate in ranked
+        if candidate["category"] == "target"
+    }
+    selected_pass = next(
+        (candidate for candidate in ranked if candidate["category"] == "iss"),
+        None,
+    )
+    guide_rows: dict[str, int] = {}
+    for row_index, fact_row in enumerate(facts_rows):
+        for guide in fact_row["constellation_guides"]:
+            guide_rows.setdefault(guide["name"], row_index)
+    selected_guides = {
+        name for name, _ in sorted(
+            guide_rows.items(),
+            key=lambda item: (
+                next(
+                    (index for index, entry in enumerate(GUIDES)
+                     if entry["name"] == item[0]),
+                    len(GUIDES),
+                ),
+                item[0],
+            ),
+        )[:settings["guides"]]
+    }
+
+    best_pass_time = selected_pass["best_time"] if selected_pass else None
+    remaining_status_slots = max(
+        0, settings["items"] - len(ranked)
+    )
+    status_rows: dict[str, tuple[int, dict]] = {}
+    if remaining_status_slots:
+        for row_index, row in enumerate(rows):
+            for item in row["items"]:
+                name = item.get("object")
+                if (
+                    item.get("outside_window")
+                    and name not in status_rows
+                    and _position_is_visible({
+                        "altitude_degrees": item.get("altitude_degrees"),
+                        "above_horizon": True,
+                    })
+                ):
+                    status_rows[name] = (row_index, item)
+        status_rows = dict(
+            sorted(status_rows.items())[:remaining_status_slots]
+        )
+    status_row_indexes = {
+        name: row_info[0] for name, row_info in status_rows.items()
+    }
+    for row_index, row in enumerate(rows):
+        kept_items = []
+        for item in row["items"]:
+            if item.get("guide"):
+                if (
+                    item["guide"] in selected_guides
+                    and guide_rows.get(item["guide"]) == row_index
+                ):
+                    kept_items.append(item)
+                continue
+            name = item.get("object")
+            if name not in selected_objects:
+                if (
+                    name in status_rows
+                    and status_row_indexes[name] == row_index
+                    and item.get("outside_window")
+                ):
+                    kept_items.append(item)
+                continue
+            best_row = (
+                position_rows.get(name)
+                if name in position_rows
+                else star_rows.get(name)
+            )
+            if best_row and best_row[0] == row_index:
+                kept_items.append(item)
+        kept_items.sort(
+            key=lambda item: (
+                ranked_order.get(f"planet:{item.get('object')}",
+                    ranked_order.get(f"moon:{item.get('object')}",
+                        ranked_order.get(f"star:{item.get('object')}", 999))),
+                item.get("object", ""),
+                item.get("guide", ""),
+            )
+        )
+        row["items"] = kept_items
+        row["telescope_targets"] = [
+            target for target in row["telescope_targets"]
+            if (
+                target["catalog"] in selected_targets
+                and target_rows[target["catalog"]][0] == row_index
+            )
+        ]
+        if best_pass_time is None:
+            row["iss_passes"] = []
+        else:
+            matching_pass = next(
+                (
+                    iss_pass for iss_pass in row["iss_passes"]
+                    if (
+                        iss_pass.get("local_date_time")
+                        or iss_pass.get("start", "")
+                    ) == best_pass_time
+                ),
+                None,
+            )
+            row["iss_passes"] = [matching_pass] if matching_pass else []
+        row["empty"] = not (
+            row["items"] or row["telescope_targets"] or row["iss_passes"]
+        )
 
 
 def _load_stops(demo: bool) -> list[dict]:
@@ -680,10 +1060,13 @@ def print_card(
     equipment: str = "telescope",
     result_data: dict | None = None,
     place_label: str | None = None,
+    depth: str | None = None,
 ) -> Path:
     """Calculate shared sky facts and write one mode-specific HTML card."""
     if mode not in MODE_PERSONAS:
         raise ValueError("mode must be lucy, juvia, or natsu")
+    depth = config.DEPTH if depth is None else depth
+    depth_settings = _depth_settings(depth)
 
     ephemeris, timescale = load_sky_data()
     config._validate_window_settings()
@@ -724,6 +1107,7 @@ def print_card(
         "date": when.strftime("%A, %B %d, %Y").replace(" 0", " "),
         "place_label": place_label if place_label is not None else config.PLACE_LABEL,
         "iss_passes": iss_passes,
+        "depth": depth,
     }
     if mode == "lucy":
         card_data["window_text"] = _window_text(best_window)
@@ -739,10 +1123,20 @@ def print_card(
         star_positions = get_star_positions(
             lat, lon, observation_time, ephemeris, timescale
         )
-        guides = applicable_guides(star_positions)
-        card_data["checklist"] = _lucy_checklist(sky_facts)
-        card_data["stars"] = brightest_visible_stars(star_positions)
-        card_data["polaris"] = _polaris_item(star_positions)
+        guides = applicable_guides(star_positions)[:depth_settings["guides"]]
+        top_picks = rank_best_of_night(
+            {
+                "positions": sky_facts["positions"],
+                "stars": star_positions,
+                "iss_passes": iss_passes,
+                "moon_illumination": sky_facts["moon_illumination"],
+            },
+            depth,
+        )
+        for pick in top_picks:
+            if pick["category"] != "iss":
+                pick["best_time"] = _format_time(observation_time)
+        card_data["top_picks"] = top_picks
         card_data["guides"] = guides
         facts = _narration_facts(
             best_window,
@@ -751,10 +1145,43 @@ def print_card(
             star_positions,
             guides,
         )
+        narration_facts = {
+            key: value for key, value in facts.items()
+            if key != "best_window"
+        }
+        selected_objects = {
+            pick["object"] for pick in top_picks
+            if pick["category"] in {"moon", "planet"}
+        }
+        if "Moon" not in selected_objects:
+            for key in ("moon_phase", "moonrise", "moonset"):
+                narration_facts.pop(key, None)
+        selected_stars = {
+            pick["object"] for pick in top_picks
+            if pick["category"] == "star"
+        }
+        narration_facts["positions"] = {
+            name: position
+            for name, position in sky_facts["positions"].items()
+            if name in selected_objects
+        }
+        guide_anchor_names = {
+            anchor
+            for guide in guides
+            for anchor in next(
+                entry["anchors"] for entry in GUIDES
+                if entry["name"] == guide["name"]
+            )
+        }
+        narration_facts["stars"] = {
+            name: position
+            for name, position in star_positions.items()
+            if name in selected_stars or name in guide_anchor_names
+        }
         card_data["intro"] = narrate(
-            facts,
+            narration_facts,
             persona,
-            sentence_count=2,
+            sentence_count=depth_settings["sentences"],
             validate_sentence_count=True,
             deterministic=demo,
         )
@@ -793,6 +1220,7 @@ def print_card(
             field_of_view,
             minimum_altitude,
             include_telescope=equipment == "telescope",
+            depth=depth,
         )
         card_data["timeline"] = timeline
         card_data["equipment"] = equipment
@@ -863,6 +1291,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Use fixed sample date and fictional sample locations.",
     )
+    parser.add_argument(
+        "--depth",
+        choices=tuple(DEPTH_LIMITS),
+        default=config.DEPTH,
+        help="Choose casual, explorer, or deep-detail output (Natsu is unchanged).",
+    )
     args = parser.parse_args(argv)
 
     if args.demo:
@@ -877,7 +1311,14 @@ def main(argv: list[str] | None = None) -> int:
         when = localize(datetime.now(ZoneInfo(config.TIMEZONE)))
 
     try:
-        print_card(latitude, longitude, when, mode=args.mode, demo=args.demo)
+        print_card(
+            latitude,
+            longitude,
+            when,
+            mode=args.mode,
+            demo=args.demo,
+            depth=args.depth,
+        )
     except (FileNotFoundError, ValueError, OSError):
         print("Sky Quest could not build the card. Check the local data files and settings.")
         return 1
