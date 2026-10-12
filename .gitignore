@@ -5,3 +5,6 @@ __pycache__/
 .venv/
 .vscode/
 config.local.py
+cards/
+stops.local.json
+places.local.json

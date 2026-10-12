@@ -1,0 +1,20 @@
+[
+  {
+    "name": "Fictional Garden Gate",
+    "latitude": 0.0,
+    "longitude": 82.5,
+    "time": "19:30"
+  },
+  {
+    "name": "Fictional Quiet Corner",
+    "latitude": 0.1,
+    "longitude": 82.6,
+    "time": "20:15"
+  },
+  {
+    "name": "Fictional Open Path",
+    "latitude": 0.2,
+    "longitude": 82.7,
+    "time": "21:00"
+  }
+]

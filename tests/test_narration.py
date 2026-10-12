@@ -53,6 +53,65 @@ class GroundingTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("cloud", reason.lower())
 
+    def test_invented_star_fails_when_only_vega_is_supplied(self):
+        facts = {
+            "stars": {
+                "Vega": {
+                    "direction": "east",
+                    "height": "high",
+                    "above_horizon": True,
+                }
+            }
+        }
+        passed, reason = grounding_check.check_grounding(
+            "Sirius is high in the south.", facts
+        )
+        self.assertFalse(passed)
+        self.assertEqual(reason, "Unlisted celestial object(s): sirius")
+
+    def test_supplied_constellation_guide_name_is_allowed(self):
+        facts = {
+            "stars": {
+                "Vega": {
+                    "direction": "east",
+                    "height": "high",
+                    "above_horizon": True,
+                }
+            },
+            "constellation_guides": [
+                {"name": "Summer Triangle", "text": "Vega, Deneb, and Altair mark the Summer Triangle."}
+            ],
+        }
+        passed, reason = grounding_check.check_grounding(
+            "The Summer Triangle is ready to find.", facts
+        )
+        self.assertTrue(passed, reason)
+
+    def test_invented_star_retries_once_then_falls_back_without_it(self):
+        facts = {
+            "stars": {
+                "Vega": {
+                    "direction": "east",
+                    "height": "high",
+                    "above_horizon": True,
+                }
+            }
+        }
+        with patch(
+            "narrate._ask_ollama",
+            side_effect=["Sirius is bright.", "Sirius is still bright."],
+        ) as model:
+            text, metadata = narrate.narrate_with_metadata(
+                facts,
+                "calm",
+                sentence_count=1,
+                validate_sentence_count=True,
+            )
+        self.assertEqual(model.call_count, 2)
+        self.assertEqual(metadata["attempts_used"], 2)
+        self.assertTrue(metadata["fell_back"])
+        self.assertNotIn("Sirius", text)
+
 
 class NarrationTests(unittest.TestCase):
     def setUp(self):
@@ -144,6 +203,65 @@ class NarrationTests(unittest.TestCase):
             text = narrate._ask_ollama(FACTS, "precise")
         client_factory.assert_called_once_with(timeout=60.0)
         self.assertEqual(text, "A grounded response.")
+
+    def test_one_sentence_option_is_sent_to_local_model(self):
+        fake_client = SimpleNamespace(
+            generate=lambda **kwargs: (
+                self.assertIn(
+                    "Write exactly 1 short, friendly sentence",
+                    kwargs["prompt"],
+                )
+                or SimpleNamespace(response="A grounded response.")
+            ),
+            close=lambda: None,
+        )
+        with patch("ollama.Client", return_value=fake_client):
+            text = narrate._ask_ollama(FACTS, "coach", sentence_count=1)
+        self.assertEqual(text, "A grounded response.")
+
+    def test_deterministic_requests_use_fixed_seed_and_zero_temperature(self):
+        generated = {}
+        fake_client = SimpleNamespace(
+            generate=lambda **kwargs: (
+                generated.update(kwargs)
+                or SimpleNamespace(response="Jupiter is high in the east.")
+            ),
+            close=lambda: None,
+        )
+        with patch("ollama.Client", return_value=fake_client):
+            narrate._ask_ollama(
+                FACTS,
+                "calm",
+                deterministic=True,
+            )
+        self.assertEqual(
+            generated["options"],
+            {"temperature": 0, "seed": 42},
+        )
+
+    def test_sentence_count_and_required_fact_retry_then_use_fact_only_fallback(self):
+        facts = dict(FACTS)
+        facts["narration_line"] = "Jupiter is high in the east."
+        with patch(
+            "narrate._ask_ollama",
+            side_effect=[
+                "Jupiter is high in the east. Go!",
+                "Jupiter is high in the east. Keep going!",
+            ],
+        ) as model:
+            text, metadata = narrate.narrate_with_metadata(
+                facts,
+                "coach",
+                sentence_count=1,
+                validate_sentence_count=True,
+                required_fact="Jupiter",
+            )
+
+        self.assertEqual(model.call_count, 2)
+        self.assertTrue(metadata["fell_back"])
+        self.assertEqual(metadata["attempts_used"], 2)
+        self.assertEqual(text, "Jupiter is high in the east.")
+        self.assertEqual(text.count("."), 1)
 
     def test_coordinates_are_redacted_in_log(self):
         coordinate_pair = ".".join(("12", "345678")) + ", " + ".".join(("77", "123456"))

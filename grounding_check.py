@@ -12,7 +12,19 @@ CELESTIAL_TERMS = (
     "moon", "sun", "mercury", "venus", "earth", "mars", "jupiter", "saturn",
     "uranus", "neptune", "pluto", "ceres", "eris", "haumea", "makemake",
     "iss", "international space station", "star", "stars", "polaris",
-    "north star", "sirius", "vega", "betelgeuse", "rigel", "orion",
+    "north star", "sirius", "vega", "arcturus", "betelgeuse", "rigel",
+    "altair", "deneb", "capella", "aldebaran", "antares", "spica",
+    "regulus", "procyon", "pollux", "fomalhaut", "canopus", "achernar",
+    "alpha centauri", "rigil kentaurus", "acrux", "hadar", "mimosa", "gacrux",
+    "dubhe", "merak",
+    "schedar", "caph", "big dipper", "cassiopeia", "summer triangle",
+    "southern cross", "south celestial pole", "orion",
+    "albireo", "mizar", "epsilon lyrae", "pleiades", "beehive cluster",
+    "double cluster", "hercules cluster", "sagittarius cluster",
+    "orion nebula", "ring nebula", "lagoon nebula", "andromeda galaxy",
+    "bode's galaxy", "whirlpool galaxy", "m 45", "m 44", "ngc 869",
+    "ngc 884", "m 13", "ngc 6121", "m 22", "m 42", "m 57", "m 8",
+    "m 31", "m 81", "m 51",
     "pleiades", "milky way", "andromeda", "galaxy", "galaxies", "nebula",
     "nebulae", "meteor", "meteors", "comet", "comets", "constellation",
     "constellations", "asteroid", "asteroids", "planet", "planets",
@@ -76,6 +88,38 @@ def _canonical_direction(direction: str) -> str:
     return direction.lower().replace("-", "").replace(" ", "")
 
 
+def _position_facts(facts: dict) -> dict[str, list[dict]]:
+    """Collect position facts from each card mode's supplied sky data."""
+    found: dict[str, list[dict]] = {}
+
+    def remember_positions(source: dict) -> None:
+        for key in ("positions", "stars", "telescope_targets"):
+            for name, position in source.get(key, {}).items():
+                if isinstance(position, dict):
+                    fact_name = str(position.get("name", name))
+                    found.setdefault(fact_name, []).append(position)
+                    found.setdefault(str(name), []).append(position)
+                    if fact_name.lower().startswith("alpha centauri"):
+                        found.setdefault("Alpha Centauri", []).append(position)
+                        found.setdefault("Rigil Kentaurus", []).append(position)
+
+    remember_positions(facts)
+    for row in facts.get("timeline", []):
+        if isinstance(row, dict):
+            remember_positions(row)
+    for stop in facts.get("route_stops", []):
+        if not isinstance(stop, dict):
+            continue
+        target = stop.get("target")
+        if isinstance(target, dict) and target.get("object"):
+            name = str(target["object"])
+            found.setdefault(name, []).append(target)
+            if name.lower().startswith("alpha centauri"):
+                found.setdefault("Alpha Centauri", []).append(target)
+                found.setdefault("Rigil Kentaurus", []).append(target)
+    return found
+
+
 def _clock_minutes(label: str | None) -> int | None:
     if not label:
         return None
@@ -97,7 +141,7 @@ def _clock_minutes(label: str | None) -> int | None:
 
 def _check_object_attributes(text: str, facts: dict) -> str:
     """Check position descriptions in the phrase following each named object."""
-    positions = facts.get("positions", {})
+    positions = _position_facts(facts)
     names = sorted(positions, key=len, reverse=True)
     if not names:
         return ""
@@ -116,21 +160,31 @@ def _check_object_attributes(text: str, facts: dict) -> str:
         mentions = list(object_pattern.finditer(sentence))
         for index, mention in enumerate(mentions):
             name = next(key for key in names if key.lower() == mention.group().lower())
-            position = positions[name]
+            object_positions = positions[name]
             clause_end = mentions[index + 1].start() if index + 1 < len(mentions) else len(sentence)
             clause = sentence[mention.end():clause_end]
 
             directions = DIRECTION_PATTERN.findall(clause)
-            expected_direction = _canonical_direction(position.get("direction", ""))
             if any(
-                _canonical_direction(direction) != expected_direction
+                not any(
+                    _canonical_direction(direction)
+                    == _canonical_direction(position.get("direction", ""))
+                    for position in object_positions
+                )
                 for direction in directions
             ):
                 return f"{name} is paired with a direction that conflicts with its supplied position."
 
             for height, pattern in heights.items():
-                if pattern.search(clause) and position.get("height") != height:
-                    return f"{name} is described as {height}, but the supplied height is {position.get('height')}."
+                if pattern.search(clause) and not any(
+                    position.get("height") == height
+                    for position in object_positions
+                ):
+                    supplied = ", ".join(sorted({
+                        str(position.get("height"))
+                        for position in object_positions
+                    }))
+                    return f"{name} is described as {height}, but the supplied height is {supplied}."
 
             says_above = bool(re.search(
                 r"\b(?:above the horizon|visible|in the sky|up in the sky)\b",
@@ -138,9 +192,15 @@ def _check_object_attributes(text: str, facts: dict) -> str:
                 re.IGNORECASE,
             ))
             says_below = bool(re.search(r"\bbelow the horizon\b", clause, re.IGNORECASE))
-            if says_above and not position.get("above_horizon", False):
+            if says_above and not any(
+                position.get("above_horizon", False)
+                for position in object_positions
+            ):
                 return f"{name} is described as visible, but supplied facts place it below the horizon."
-            if says_below and position.get("above_horizon", False):
+            if says_below and not any(
+                not position.get("above_horizon", False)
+                for position in object_positions
+            ):
                 return f"{name} is described as below the horizon, but supplied facts place it above."
     return ""
 
@@ -204,11 +264,45 @@ def check_grounding(text: str, facts: dict) -> tuple[bool, str]:
         return False, "Supplied facts must be a dictionary."
 
     source = _fact_text(facts).lower()
-    allowed_objects = {str(name).lower() for name in facts.get("positions", {})}
+    position_facts = _position_facts(facts)
+    allowed_objects = {name.lower() for name in position_facts}
+    if "alpha centauri" in allowed_objects or any(
+        name.startswith("alpha centauri") for name in allowed_objects
+    ):
+        allowed_objects.add("rigil kentaurus")
+        allowed_objects.add("alpha centauri")
+    has_star_facts = bool(facts.get("stars")) or any(
+        bool(row.get("stars"))
+        for row in facts.get("timeline", [])
+        if isinstance(row, dict)
+    ) or any(
+        str(stop.get("target", {}).get("object", "")).lower()
+        not in {"", "moon", "jupiter", "saturn"}
+        for stop in facts.get("route_stops", [])
+        if isinstance(stop, dict) and isinstance(stop.get("target"), dict)
+    )
+    if has_star_facts:
+        allowed_objects.update(("star", "stars"))
+    if "polaris" in allowed_objects:
+        allowed_objects.add("north star")
     if facts.get("iss_passes"):
         allowed_objects.update(("iss", "international space station"))
     if facts.get("sunset") or facts.get("dark_time"):
         allowed_objects.add("sun")
+    guides = list(facts.get("constellation_guides", []))
+    guides.extend(
+        guide
+        for row in facts.get("timeline", [])
+        if isinstance(row, dict)
+        for guide in row.get("constellation_guides", [])
+    )
+    allowed_objects.update(
+        str(guide.get("name", "")).lower()
+        for guide in guides
+        if isinstance(guide, dict)
+    )
+    if guides:
+        allowed_objects.update(("constellation", "constellations"))
 
     unknown_objects = sorted({
         term for term in CELESTIAL_TERMS

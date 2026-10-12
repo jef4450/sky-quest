@@ -1,6 +1,7 @@
 """Ask a local Ollama model to describe supplied facts and verify its response."""
 
 import json
+import re
 from typing import Any
 
 import config
@@ -16,9 +17,15 @@ PERSONAS = {
 }
 
 
-def fallback_text(facts: dict) -> str:
+def fallback_text(
+    facts: dict,
+    sentence_count: int | None = None,
+    required_fact: str | None = None,
+) -> str:
     """Build narration only from fields present in the supplied facts."""
     sentences = []
+    if facts.get("narration_line"):
+        sentences.append(str(facts["narration_line"]))
     best = facts.get("best_window")
     if best and best.get("start") and best.get("end"):
         sentences.append(f"Best window: {best['start']} to {best['end']}.")
@@ -59,19 +66,43 @@ def fallback_text(facts: dict) -> str:
 
     if not sentences:
         return "No supplied sky facts are available."
+    if sentence_count is not None:
+        if required_fact:
+            matching = [
+                sentence for sentence in sentences
+                if required_fact.casefold() in sentence.casefold()
+            ]
+            remainder = [sentence for sentence in sentences if sentence not in matching]
+            sentences = matching + remainder
+        sentences = sentences[:sentence_count]
     return " ".join(sentences)
 
 
-def _ask_ollama(facts: dict, persona: str, correction: str = "") -> str:
+def _ask_ollama(
+    facts: dict,
+    persona: str,
+    correction: str = "",
+    sentence_count: int | None = None,
+    required_fact: str | None = None,
+    deterministic: bool = False,
+) -> str:
     import ollama
 
     prompt = (
-        f"Write 2 or 3 short, friendly sentences in a {PERSONAS[persona]} style. "
+        (
+            f"Write exactly {sentence_count} short, friendly "
+            f"{'sentence' if sentence_count == 1 else 'sentences'}"
+            if sentence_count is not None
+            else "Write 2 or 3 short, friendly sentences"
+        )
+        + f" in a {PERSONAS[persona]} style. "
         "Use ONLY the given facts. Do not add numbers, celestial objects, weather, "
         "directions, times, or events that are not listed. Do not calculate or "
         "infer sky facts. Keep every direction and time exactly as supplied.\n"
         f"Facts:\n{json.dumps(facts, ensure_ascii=False, indent=2)}"
     )
+    if required_fact:
+        prompt += f"\nInclude this supplied fact: {required_fact}."
     if correction:
         prompt += (
             f"\nYour previous answer failed this check: {correction}. "
@@ -80,7 +111,17 @@ def _ask_ollama(facts: dict, persona: str, correction: str = "") -> str:
 
     client = ollama.Client(timeout=OLLAMA_TIMEOUT_SECONDS)
     try:
-        response = client.generate(model=config.MODEL_NAME, prompt=prompt)
+        generation_options = (
+            {"temperature": 0, "seed": 42} if deterministic else None
+        )
+        if generation_options is not None:
+            response = client.generate(
+                model=config.MODEL_NAME,
+                prompt=prompt,
+                options=generation_options,
+            )
+        else:
+            response = client.generate(model=config.MODEL_NAME, prompt=prompt)
     finally:
         client.close()
     if isinstance(response, dict):
@@ -141,9 +182,11 @@ def _fact_only_fallback(
     facts: dict,
     persona: str,
     metadata: dict[str, Any],
+    sentence_count: int | None,
+    required_fact: str | None,
 ) -> str:
     """Return checked prose, or the original facts as JSON if labels do not validate."""
-    fallback = fallback_text(facts)
+    fallback = fallback_text(facts, sentence_count, required_fact)
     passed, reason = check_grounding(fallback, facts)
     if passed:
         return fallback
@@ -156,11 +199,20 @@ def _fact_only_fallback(
 def narrate_with_metadata(
     facts: dict,
     persona: str | None = None,
+    *,
+    sentence_count: int | None = None,
+    validate_sentence_count: bool = False,
+    required_fact: str | None = None,
+    deterministic: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     """Return narration and diagnostics while keeping `narrate()` string-compatible."""
     chosen_persona = persona or config.PERSONA
     if chosen_persona not in PERSONAS:
         raise ValueError(f"PERSONA must be one of: {', '.join(PERSONAS)}")
+    if sentence_count is not None and sentence_count < 1:
+        raise ValueError("sentence_count must be at least one.")
+    if validate_sentence_count and sentence_count is None:
+        raise ValueError("sentence_count is required when validating sentence count.")
 
     metadata: dict[str, Any] = {
         "attempts_used": 0,
@@ -172,11 +224,24 @@ def narrate_with_metadata(
     for attempt in range(2):
         metadata["attempts_used"] += 1
         try:
-            text = _ask_ollama(
-                facts,
-                chosen_persona,
-                metadata["failure_reasons"][-1] if attempt else "",
-            )
+            correction = metadata["failure_reasons"][-1] if attempt else ""
+            if (
+                sentence_count is None
+                and required_fact is None
+                and not deterministic
+            ):
+                text = _ask_ollama(facts, chosen_persona, correction)
+            else:
+                request_options = {}
+                if sentence_count is not None:
+                    request_options["sentence_count"] = sentence_count
+                if required_fact is not None:
+                    request_options["required_fact"] = required_fact
+                if deterministic:
+                    request_options["deterministic"] = True
+                text = _ask_ollama(
+                    facts, chosen_persona, correction, **request_options
+                )
         except Exception as error:
             failure_type, reason = _model_error_details(error)
             metadata["failure_reasons"].append(reason)
@@ -192,9 +257,32 @@ def narrate_with_metadata(
                 print(f"Sky Quest cannot load Ollama. {reason}")
             else:
                 print(f"Sky Quest narration error: {reason}")
-            return _fact_only_fallback(facts, chosen_persona, metadata), metadata
+            return _fact_only_fallback(
+                facts,
+                chosen_persona,
+                metadata,
+                sentence_count if validate_sentence_count else None,
+                required_fact,
+            ), metadata
 
         passed, reason = check_grounding(text, facts)
+        if passed and required_fact and required_fact.casefold() not in text.casefold():
+            passed = False
+            reason = f"Narration did not include the supplied fact: {required_fact}."
+        if passed and validate_sentence_count:
+            sentence_total = len(
+                [
+                    item
+                    for item in re.split(r"(?<=[.!?])\s+", text.strip())
+                    if item.strip()
+                ]
+            )
+            if sentence_total != sentence_count:
+                passed = False
+                reason = (
+                    f"Narration has {sentence_total} sentences; "
+                    f"the card needs exactly {sentence_count}."
+                )
         if passed:
             metadata["passed"] = True
             return text, metadata
@@ -207,10 +295,31 @@ def narrate_with_metadata(
             print(f"Gemma's retry failed the grounding check: {reason}. Using a fact-only template.")
 
     metadata["fell_back"] = True
-    return _fact_only_fallback(facts, chosen_persona, metadata), metadata
+    return _fact_only_fallback(
+        facts,
+        chosen_persona,
+        metadata,
+        sentence_count if validate_sentence_count else None,
+        required_fact,
+    ), metadata
 
 
-def narrate(facts: dict, persona: str | None = None) -> str:
+def narrate(
+    facts: dict,
+    persona: str | None = None,
+    *,
+    sentence_count: int | None = None,
+    validate_sentence_count: bool = False,
+    required_fact: str | None = None,
+    deterministic: bool = False,
+) -> str:
     """Return narration as a string for compatibility with existing callers."""
-    text, _ = narrate_with_metadata(facts, persona)
+    text, _ = narrate_with_metadata(
+        facts,
+        persona,
+        sentence_count=sentence_count,
+        validate_sentence_count=validate_sentence_count,
+        required_fact=required_fact,
+        deterministic=deterministic,
+    )
     return text

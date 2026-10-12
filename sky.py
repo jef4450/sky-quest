@@ -62,6 +62,8 @@ def compass_direction(azimuth_degrees: float) -> str:
 
 def height_word(altitude_degrees: float) -> str:
     """Describe an object's altitude in simple terms."""
+    if altitude_degrees <= 0:
+        return "below the horizon"
     if altitude_degrees < 30:
         return "low"
     if altitude_degrees < 60:
@@ -75,6 +77,7 @@ def _position(observer, body, sky_time) -> dict:
     altitude_degrees = float(altitude.degrees)
     return {
         "altitude_degrees": round(altitude_degrees, 1),
+        "azimuth_degrees": round(float(azimuth.degrees), 1),
         "direction": compass_direction(float(azimuth.degrees)),
         "height": height_word(altitude_degrees),
         "above_horizon": altitude_degrees > 0,
@@ -138,6 +141,14 @@ def _moon_phase(phase_degrees: float) -> str:
     return phases[index]
 
 
+def moon_illumination_at(ephemeris, timescale, when: datetime) -> float:
+    """Return the illuminated fraction of the Moon at a local observing time."""
+    phase_degrees = float(
+        almanac.moon_phase(ephemeris, timescale.from_datetime(localize(when))).degrees
+    )
+    return round((1 - math.cos(math.radians(phase_degrees))) / 2, 2)
+
+
 def _clock(when: datetime | None) -> str | None:
     return when.strftime("%I:%M %p").lstrip("0") if when is not None else None
 
@@ -195,6 +206,26 @@ def get_sky(
 
 def _sun_is_dark(observer, sun, sky_time) -> bool:
     return _sun_altitude(observer, sun, sky_time) <= DARK_SUN_ALTITUDE
+
+
+def is_dark_at(
+    lat: float,
+    lon: float,
+    when: datetime,
+    *,
+    ephemeris=None,
+    timescale=None,
+) -> bool:
+    """Return whether the Sun is below the existing dark-sky altitude threshold."""
+    if ephemeris is None or timescale is None:
+        ephemeris, timescale = load_sky_data()
+    moment = localize(when)
+    observer = ephemeris["earth"] + wgs84.latlon(
+        latitude_degrees=lat,
+        longitude_degrees=lon,
+    )
+    sky_time = timescale.from_datetime(moment)
+    return _sun_is_dark(observer, ephemeris["sun"], sky_time)
 
 
 def find_iss_passes(
@@ -264,6 +295,11 @@ def _summarize_pass(samples: list[tuple]) -> dict | None:
         return None
     return {
         "start": first[0].strftime("%b %d, %I:%M %p").lstrip("0"),
+        "local_date_time": (
+            first[0].strftime("%b %d, %Y at ")
+            + first[0].strftime("%I:%M %p").lstrip("0")
+        ),
+        "start_datetime": first[0].isoformat(),
         "appears_from": compass_direction(first[3]),
         "disappears_toward": compass_direction(last[3]),
         "duration_minutes": round(
