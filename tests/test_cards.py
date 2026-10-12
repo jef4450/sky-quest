@@ -279,7 +279,12 @@ class HtmlCardTests(unittest.TestCase):
         html = render_html_card("juvia", data)
         self.assertIn("Sky Quest - Test card", html)
         self.assertIn("Window facing: east", html)
-        self.assertIn("Estimated viewing times", html)
+        self.assertIn("Best time to look at each object", html)
+        self.assertIn(
+            "Each object is listed once, at its best time, and stays visible "
+            "for hours around it.",
+            html,
+        )
         self.assertIn("Jupiter: not in your window", html)
         self.assertIn("Each listed target passed the local", html)
         outside = html.split("Jupiter: not in your window", 1)[1].split("</li>", 1)[0]
@@ -450,6 +455,28 @@ class ModeAndAstronomyTests(unittest.TestCase):
         self.assertEqual(self.mocks[4].call_count, calls_before_juvia)
         juvia_html = (self.output_dir / "juvia-2026-10-15.html").read_text(encoding="utf-8")
         self.assertNotIn("this is juvias", juvia_html.lower())
+
+    def test_juvia_no_window_direction_uses_place_based_intro(self):
+        with patch.object(config, "WINDOW_FACING", None):
+            with patch("main.get_positions", return_value=sky_facts()["positions"]):
+                main.print_card(
+                    12.0,
+                    77.0,
+                    START,
+                    mode="juvia",
+                    equipment="naked_eye",
+                    output_dir=self.output_dir,
+                )
+
+        html = (
+            self.output_dir / "juvia-2026-10-15.html"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "Take a quiet naked-eye look at the objects in tonight&#x27;s sky "
+            "from your place.",
+            html,
+        )
+        self.assertNotIn("objects listed in your window", html)
 
     def test_lucy_renders_one_window_and_caps_rows_guides_and_intro(self):
         for depth, cap, guide_cap, sentence_count in (
@@ -878,10 +905,47 @@ class ModeAndAstronomyTests(unittest.TestCase):
         data["timeline"] = timeline[:1]
         data["timeline"][0]["iss_passes"] = []
         html = render_html_card("juvia", data)
-        self.assertIn("nothing in your window at this time", html)
+        self.assertIn("Nothing visible tonight.", html)
+        self.assertEqual(html.count("Nothing visible tonight."), 1)
+        self.assertNotIn('class="timeline-row"', html)
         self.assertIn(NO_ISS_MESSAGE, html)
 
-    def test_juvia_iss_appears_only_in_the_timeline_row(self):
+    def test_juvia_omits_empty_timeline_rows_and_keeps_polaris_note(self):
+        data = HtmlCardTests().data()
+        data["timeline"] = [
+            {
+                "time": "8:00 PM",
+                "items": [],
+                "empty": True,
+                "iss_passes": [],
+            },
+            {
+                "time": "9:00 PM",
+                "items": [
+                    {
+                        "text": (
+                            "Polaris is low from here: you need a clear north horizon."
+                        ),
+                        "checkable": False,
+                    }
+                ],
+                "empty": False,
+                "iss_passes": [],
+            },
+        ]
+
+        html = render_html_card("juvia", data)
+
+        self.assertEqual(html.count('class="timeline-row"'), 1)
+        self.assertIn('class="timeline-time">9:00 PM', html)
+        self.assertNotIn('class="timeline-time">8:00 PM', html)
+        self.assertIn(
+            "Polaris is low from here: you need a clear north horizon.",
+            html,
+        )
+        self.assertNotIn("Nothing visible tonight.", html)
+
+    def test_juvia_preserves_pass_without_rendering_an_empty_timeline_row(self):
         data = HtmlCardTests().data()
         data["timeline"] = [
             {
@@ -909,6 +973,8 @@ class ModeAndAstronomyTests(unittest.TestCase):
             html.count("ISS (local time): Oct 15, 2026 at 8:20 PM; from west toward east"),
             1,
         )
+        self.assertIn("Nothing visible tonight.", html)
+        self.assertNotIn('class="timeline-row"', html)
 
     def test_juvia_real_polaris_rules_at_three_latitudes(self):
         dark_start = START

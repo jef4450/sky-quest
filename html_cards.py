@@ -295,9 +295,16 @@ def render_html_card(mode: str, data: dict) -> str:
         parts.append('<p class="small">Give your eyes 10 minutes to adjust.</p>')
     elif mode == "juvia":
         parts.append(f'<p class="intro">{_e(data["intro"])}</p>')
-        parts.append("<h2>Estimated viewing times</h2>")
+        parts.append("<h2>Best time to look at each object</h2>")
+        parts.append(
+            '<p class="timeline-note">Each object is listed once, at its best time, '
+            "and stays visible for hours around it.</p>"
+        )
+        visible_rows = [
+            row for row in data["timeline"] if row["items"]
+        ]
         parts.append('<ul class="timeline">')
-        for row in data["timeline"]:
+        for row in visible_rows:
             parts.append(
                 '<li class="timeline-row">'
                 f'<strong class="timeline-time">{_e(row["time"])}</strong>'
@@ -321,10 +328,6 @@ def render_html_card(mode: str, data: dict) -> str:
                     )
                     + "</span></li>"
                 )
-            if row["empty"]:
-                parts.append(
-                    '<li class="row-empty">nothing in your window at this time</li>'
-                )
             for iss_pass in row["iss_passes"]:
                 parts.append(
                     '<li class="row-iss">ISS (local time): '
@@ -341,10 +344,21 @@ def render_html_card(mode: str, data: dict) -> str:
                     f'{_e(target["altitude_degrees"])} degrees</li>'
                 )
             parts.append("</ul></div></li>")
-        if not data["timeline"]:
-            parts.append(
-                '<li class="timeline-row">No dark timeline is available.</li>'
-            )
+        if data["timeline"] and not visible_rows:
+            parts.append('<li class="row-empty">Nothing visible tonight.</li>')
+        elif not data["timeline"]:
+            parts.append('<li class="row-empty">No dark timeline is available.</li>')
+        omitted_rows = [
+            row for row in data["timeline"] if not row["items"]
+        ]
+        for row in omitted_rows:
+            for iss_pass in row["iss_passes"]:
+                parts.append(
+                    '<li class="row-iss">ISS (local time): '
+                    f'{_e(iss_pass.get("local_date_time", iss_pass["start"]))}; from '
+                    f'{_e(iss_pass["appears_from"])} toward '
+                    f'{_e(iss_pass["disappears_toward"])}</li>'
+                )
         if data.get("equipment", "telescope") == "telescope":
             parts.append("</ul><h2>Telescope candidates</h2>")
             parts.append(
@@ -352,6 +366,15 @@ def render_html_card(mode: str, data: dict) -> str:
                 'altitude, darkness, and Moon checks. These are candidates, not a '
                 'guarantee of visibility; sky quality and equipment matter.</p>'
             )
+            for row in omitted_rows:
+                for target in row.get("telescope_targets", []):
+                    parts.append(
+                        '<p class="telescope-candidate">'
+                        f'{_e(row["time"])}: {_e(target["catalog"])} '
+                        f'({_e(target["name"])}), {_e(target["kind"])}: '
+                        f'{_e(target["direction"])}, {_e(target["height"])}, '
+                        f'altitude {_e(target["altitude_degrees"])} degrees</p>'
+                    )
         else:
             parts.append("</ul>")
         parts.append('<h2>Room notes</h2><div class="notes"></div>')

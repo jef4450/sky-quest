@@ -1231,7 +1231,11 @@ def print_card(
             "Telescope candidates pass the altitude, darkness, and Moon checks "
             "shown here; local sky conditions still affect what you can see."
             if equipment == "telescope"
-            else "Take a quiet naked-eye look at the objects listed in your window."
+            else (
+                "Take a quiet naked-eye look at the objects listed in your window."
+                if facing is not None
+                else "Take a quiet naked-eye look at the objects in tonight's sky from your place."
+            )
         )
         facts = {
             "sky": sky_facts,
